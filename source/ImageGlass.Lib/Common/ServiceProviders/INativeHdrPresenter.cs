@@ -17,6 +17,20 @@ using System;
 namespace ImageGlass.Common.ServiceProviders;
 
 /// <summary>
+/// Snapshot of the viewer navigation-button visual state that must be mirrored by a native HDR
+/// presentation surface when HWND airspace hides the Avalonia overlay.
+/// </summary>
+public readonly record struct NativeHdrNavOverlayState(
+    bool Enabled,
+    long Revision,
+    double LeftProgress,
+    double RightProgress,
+    bool LeftPressed,
+    bool RightPressed,
+    Rect LeftButtonRect,
+    Rect RightButtonRect);
+
+/// <summary>
 /// Optional platform presenter that can place a decoded HDR raster on a native
 /// operating-system HDR presentation surface instead of the SDR Avalonia surface.
 /// </summary>
@@ -58,6 +72,7 @@ public interface INativeHdrPresenter : IDisposable
         PhotoMetadata metadata,
         Rect sourceRect,
         Rect destinationRect,
+        NativeHdrNavOverlayState navOverlay,
         double renderScaling);
 
     /// <summary>Hides the native surface without discarding the SDR fallback.</summary>
