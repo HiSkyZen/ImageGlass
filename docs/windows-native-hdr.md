@@ -100,6 +100,9 @@ After native presentation is stable:
 
 ## Validation targets
 
+To force the legacy ImageGlass presentation path in the same build, start ImageGlass with
+`IMAGEGLASS_NATIVE_HDR=0` (also accepts `false` or `off`).
+
 Initial validation should use the same scRGB JXR in:
 
 1. Microsoft Photos
