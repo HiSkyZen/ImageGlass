@@ -55,6 +55,14 @@ public class NavButtonsOverlay : PhControl
     private bool _animRunning = false;
     private TimeSpan _lastFrameTime = TimeSpan.Zero;
 
+    // Last state published to the native HDR presenter. The native HWND remains input-transparent;
+    // this only mirrors Avalonia's visual state when airspace covers the overlay.
+    private double _publishedLeftProgress = -1;
+    private double _publishedRightProgress = -1;
+    private bool _publishedLeftPressed;
+    private bool _publishedRightPressed;
+    private bool _publishedDragging;
+
 
     public NavButtonsOverlay()
     {
@@ -88,6 +96,7 @@ public class NavButtonsOverlay : PhControl
         AddHandler(ContextRequestedEvent, OnContextRequested, RoutingStrategies.Tunnel);
 
         LoadIcons();
+        PublishNativeVisualState(force: true);
     }
 
 
@@ -137,6 +146,7 @@ public class NavButtonsOverlay : PhControl
     {
         base.OnIgThemeChanged(e);
         LoadIcons();
+        PublishNativeVisualState(force: true);
         InvalidateVisual();
     }
 
@@ -392,6 +402,7 @@ public class NavButtonsOverlay : PhControl
         _leftAnimTarget = leftVisible;
         _rightAnimTarget = rightVisible;
 
+        PublishNativeVisualState();
         EnsureAnimationRunning();
     }
 
@@ -434,6 +445,7 @@ public class NavButtonsOverlay : PhControl
                 ? Math.Min(1.0, _rightAnimProgress + step)
                 : Math.Max(0.0, _rightAnimProgress - step);
 
+            PublishNativeVisualState();
             InvalidateVisual();
         }
         _lastFrameTime = ts;
@@ -467,17 +479,38 @@ public class NavButtonsOverlay : PhControl
     }
 
 
-    private Rect GetLeftButtonRect()
-    {
-        var size = NavButtonsInfo.NAV_BTN_SIZE;
-        return new Rect(NavButtonsInfo.NAV_BTN_MARGIN, (Bounds.Height - size.Height) / 2, size.Width, size.Height);
-    }
+    private Rect GetLeftButtonRect() => NavButtonsInfo.GetLeftButtonRect(Bounds.Size);
 
 
-    private Rect GetRightButtonRect()
+    private Rect GetRightButtonRect() => NavButtonsInfo.GetRightButtonRect(Bounds.Size);
+
+
+    private void PublishNativeVisualState(bool force = false)
     {
-        var size = NavButtonsInfo.NAV_BTN_SIZE;
-        return new Rect(Bounds.Width - NavButtonsInfo.NAV_BTN_MARGIN - size.Width, (Bounds.Height - size.Height) / 2, size.Width, size.Height);
+        if (_parentViewer is null) return;
+
+        var changed = force
+            || _publishedLeftProgress != _leftAnimProgress
+            || _publishedRightProgress != _rightAnimProgress
+            || _publishedLeftPressed != _state.IsLeftPressed
+            || _publishedRightPressed != _state.IsRightPressed
+            || _publishedDragging != _state.IsDragging;
+
+        if (!changed) return;
+
+        _publishedLeftProgress = _leftAnimProgress;
+        _publishedRightProgress = _rightAnimProgress;
+        _publishedLeftPressed = _state.IsLeftPressed;
+        _publishedRightPressed = _state.IsRightPressed;
+        _publishedDragging = _state.IsDragging;
+
+        _state.LeftAnimationProgress = _leftAnimProgress;
+        _state.RightAnimationProgress = _rightAnimProgress;
+        unchecked { _state.NativeVisualRevision++; }
+
+        // Keep the existing Avalonia input/state machine as the single source of truth.
+        // The native presenter only redraws the visual mirror above the HDR child HWND.
+        _parentViewer.RefreshNativeHdrPresentation();
     }
 
 
