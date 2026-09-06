@@ -567,6 +567,26 @@ public partial class ViewerControl
             var rotatedImage = SkiaCodec.RotateImage(srcImage, degree);
             if (rotatedImage.IsDisposed()) return false;
 
+            // Native HDR must use the exact same geometric coordinate space as the Avalonia
+            // render image. Keeping the original unrotated _imgHdrSource while BitmapSize/SrcRect
+            // are rotated makes pan rectangles sample the wrong axes and produces stretch/squash.
+            if (_imgHdrSource?.Image is { } hdrSource && !hdrSource.IsDisposed())
+            {
+                var rotatedHdrImage = SkiaCodec.RotateImage(hdrSource, degree);
+                if (rotatedHdrImage.IsDisposed())
+                {
+                    // Never present mismatched geometry. Fall back to Avalonia SDR for this edit
+                    // if the HDR-preserving rotation could not be produced.
+                    SKImageRef.Set(ref _imgHdrSource, null);
+                }
+                else
+                {
+                    SKImageRef.Set(ref _imgHdrSource, rotatedHdrImage);
+                    PhotoTrace.Mark("native-hdr:rotate", Photo?.FilePath,
+                        $"degree={degree:0.###}, hdr={rotatedHdrImage.Width}x{rotatedHdrImage.Height}/{rotatedHdrImage.ColorType}");
+                }
+            }
+
             // update the render cache, keep _imgSource intact
             SKImageRef.Set(ref _imgRender, rotatedImage);
             _mipmapCache?.Dispose();
