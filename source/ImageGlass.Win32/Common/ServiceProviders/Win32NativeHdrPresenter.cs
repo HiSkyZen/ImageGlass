@@ -565,17 +565,17 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         ((ID2D1RenderTarget)_d2dContext).DrawBitmap(
             _sourceBitmap,
             new Vortice.Mathematics.Rect(
-                (int)dest.Left,
-                (int)dest.Top,
-                (int)dest.Right,
-                (int)dest.Bottom),
+                dest.X,
+                dest.Y,
+                dest.Width,
+                dest.Height),
             1.0f,
             D2DBitmapInterpolationMode.Linear,
             new Vortice.Mathematics.Rect(
-                (int)src.Left,
-                (int)src.Top,
-                (int)src.Right,
-                (int)src.Bottom));
+                src.X,
+                src.Y,
+                src.Width,
+                src.Height));
 
         PhotoTrace.Mark("native-hdr:draw-issued", null, "DrawBitmap queued");
 
