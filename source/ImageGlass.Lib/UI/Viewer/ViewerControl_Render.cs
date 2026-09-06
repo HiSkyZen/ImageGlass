@@ -236,6 +236,7 @@ public partial class ViewerControl
                 if (metadata is null
                     || _animator is not null
                     || IsVectorSource()
+                    || _liveHdrToneMapping
                     || EnableSelection
                     || _imgHdrSource is null)
                 {
