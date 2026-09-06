@@ -190,17 +190,23 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         var eligible = CanPresent(metadata);
         var disposed = image.IsDisposed();
         var supportedColorType = image.ColorType is SKColorType.RgbaF16 or SKColorType.RgbaF16Clamped;
+        const double rectEpsilon = 0.01;
+        var sourceRectMatchesRaster = sourceRect.X >= -rectEpsilon
+            && sourceRect.Y >= -rectEpsilon
+            && sourceRect.Right <= image.Width + rectEpsilon
+            && sourceRect.Bottom <= image.Height + rectEpsilon;
 
         if (!eligible
             || disposed
             || sourceRect.IsEmpty
             || destinationRect.IsEmpty
             || renderScaling <= 0
-            || !supportedColorType)
+            || !supportedColorType
+            || !sourceRectMatchesRaster)
         {
             PhotoTrace.Mark("native-hdr:reject", metadata.FilePath,
                 $"{DescribeEligibility(metadata)}, image={image.Width}x{image.Height}/{image.ColorType}, disposed={disposed}, "
-                + $"src={sourceRect}, dst={destinationRect}, dpi={renderScaling:0.###}");
+                + $"src={sourceRect}, srcFitsRaster={sourceRectMatchesRaster}, dst={destinationRect}, dpi={renderScaling:0.###}");
 
             Hide();
             return false;
