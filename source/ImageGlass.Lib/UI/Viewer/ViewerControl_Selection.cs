@@ -76,10 +76,19 @@ public partial class ViewerControl
         set
         {
             _selection.Enabled = value;
-            if (!_selection.Enabled && Parent != null)
+
+            if (_selection.Enabled)
+            {
+                // A native child HWND composes above Avalonia. Hide it before selection/crop
+                // overlays become active so their guides and handles are never obscured.
+                Core.NativeHdrPresenter?.Hide();
+            }
+            else if (Parent != null)
             {
                 Cursor = Avalonia.Input.Cursor.Default;
             }
+
+            InvalidateVisual();
         }
     }
 
