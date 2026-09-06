@@ -193,6 +193,10 @@ public partial class ViewerControl
 
     public override void Render(DrawingContext c)
     {
+        // Keep the native HDR child surface synchronized with the exact viewport that Avalonia
+        // is about to draw. The presenter internally skips redundant uploads/presents.
+        RefreshNativeHdrPresentation();
+
         base.Render(c);
 
         using (c.PushClip(DrawingArea))
@@ -203,6 +207,64 @@ public partial class ViewerControl
         }
 
         OnDrawDebugInfo(c);         // draw debug info
+    }
+
+
+    /// <summary>
+    /// Synchronizes the optional platform-native HDR presenter with the current static scRGB frame.
+    /// The normal Avalonia image remains rendered underneath as a failure-safe fallback.
+    /// </summary>
+    public void RefreshNativeHdrPresentation()
+    {
+        var presenter = Core.NativeHdrPresenter;
+        if (presenter is null) return;
+
+        SKImageRef.ImageLease? hdrLease = null;
+        PhotoMetadata? metadata;
+        Rect sourceRect;
+        Rect destinationRect;
+        var shouldHide = false;
+
+        try
+        {
+            lock (_lock)
+            {
+                metadata = Photo?.Metadata;
+                sourceRect = SrcRect;
+                destinationRect = DestRect;
+
+                if (metadata is null
+                    || _animator is not null
+                    || IsVectorSource()
+                    || EnableSelection
+                    || _imgHdrSource is null)
+                {
+                    shouldHide = true;
+                }
+                else
+                {
+                    hdrLease = _imgHdrSource.Acquire();
+                    shouldHide = hdrLease is null;
+                }
+            }
+
+            if (!shouldHide && hdrLease is not null && metadata is not null)
+            {
+                var image = hdrLease.Image;
+                if (!image.IsDisposed()
+                    && presenter.CanPresent(metadata)
+                    && presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, Dpi))
+                {
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            hdrLease?.Dispose();
+        }
+
+        presenter.Hide();
     }
 
 
