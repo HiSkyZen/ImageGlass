@@ -26,6 +26,7 @@ using ImageGlass.Common;
 using ImageGlass.Common.Extensions;
 using ImageGlass.Common.Loggers;
 using ImageGlass.Common.Photoing;
+using ImageGlass.Common.ServiceProviders;
 using ImageGlass.Common.Types;
 using ImageGlass.UI.Viewer.Checkerboard;
 using SkiaSharp;
@@ -52,6 +53,10 @@ public partial class ViewerControl
     // retained pre-tone-map HDR frame for live in-memory re-tone-mapping (only while the HDR tool is active)
     private SKImageRef? _imgHdrSource;
     private InterlockedBool _liveHdrToneMapping = new(false);
+
+    // Last native-HDR eligibility state emitted to PhotoTrace. Viewer Render() can run frequently,
+    // so only state transitions are logged.
+    private string? _nativeHdrTraceState;
 
     // coalescing state for the background HDR re-tone-map pump (latest-request-wins)
     private volatile bool _hdrDirty;
@@ -193,6 +198,10 @@ public partial class ViewerControl
 
     public override void Render(DrawingContext c)
     {
+        // Keep the native HDR child surface synchronized with the exact viewport that Avalonia
+        // is about to draw. The presenter internally skips redundant uploads/presents.
+        RefreshNativeHdrPresentation();
+
         base.Render(c);
 
         using (c.PushClip(DrawingArea))
@@ -203,6 +212,92 @@ public partial class ViewerControl
         }
 
         OnDrawDebugInfo(c);         // draw debug info
+    }
+
+
+    /// <summary>
+    /// Synchronizes the optional platform-native HDR presenter with the current static scRGB frame.
+    /// The normal Avalonia image remains rendered underneath as a failure-safe fallback.
+    /// </summary>
+    public void RefreshNativeHdrPresentation()
+    {
+        var presenter = Core.NativeHdrPresenter;
+        if (presenter is null)
+        {
+            TraceNativeHdrState("no-presenter");
+            return;
+        }
+
+        SKImageRef.ImageLease? hdrLease = null;
+        PhotoMetadata? metadata;
+        Rect sourceRect;
+        Rect destinationRect;
+        NativeHdrNavOverlayState navOverlay;
+        string? blockReason = null;
+
+        try
+        {
+            lock (_lock)
+            {
+                metadata = Photo?.Metadata;
+                sourceRect = SrcRect;
+                destinationRect = DestRect;
+                navOverlay = GetNativeHdrNavOverlayState();
+
+                if (metadata is null) blockReason = "no-metadata";
+                else if (_animator is not null) blockReason = "animation";
+                else if (IsVectorSource()) blockReason = "vector";
+                else if (_liveHdrToneMapping) blockReason = "live-tone-mapping";
+                else if (EnableSelection) blockReason = "selection";
+                else if (_imgHdrSource is null) blockReason = "no-raw-hdr-frame";
+                else
+                {
+                    hdrLease = _imgHdrSource.Acquire();
+                    if (hdrLease is null) blockReason = "raw-hdr-lease-failed";
+                }
+            }
+
+            if (blockReason is not null)
+            {
+                TraceNativeHdrState($"blocked:{blockReason}; transfer={metadata?.HdrTransferFn}; isHdr={metadata?.IsHdr}; src={sourceRect}; dst={destinationRect}");
+            }
+            else if (hdrLease is not null && metadata is not null)
+            {
+                var image = hdrLease.Image;
+                if (image.IsDisposed())
+                {
+                    TraceNativeHdrState("blocked:raw-hdr-disposed");
+                }
+                else if (!presenter.CanPresent(metadata))
+                {
+                    TraceNativeHdrState($"blocked:presenter-ineligible; transfer={metadata.HdrTransferFn}; isHdr={metadata.IsHdr}; raw={image.Width}x{image.Height}/{image.ColorType}");
+                }
+                else if (presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, navOverlay, Dpi))
+                {
+                    TraceNativeHdrState($"active; raw={image.Width}x{image.Height}/{image.ColorType}; src={sourceRect}; dst={destinationRect}; dpi={Dpi:0.###}");
+                    return;
+                }
+                else
+                {
+                    TraceNativeHdrState($"blocked:presenter-failed; raw={image.Width}x{image.Height}/{image.ColorType}");
+                }
+            }
+        }
+        finally
+        {
+            hdrLease?.Dispose();
+        }
+
+        presenter.Hide();
+    }
+
+
+    private void TraceNativeHdrState(string state)
+    {
+        if (string.Equals(_nativeHdrTraceState, state, StringComparison.Ordinal)) return;
+
+        _nativeHdrTraceState = state;
+        PhotoTrace.Mark("native-hdr:viewer", Photo?.FilePath, state);
     }
 
 

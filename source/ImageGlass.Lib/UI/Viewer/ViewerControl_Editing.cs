@@ -21,6 +21,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using ImageGlass.Common;
 using ImageGlass.Common.Extensions;
+using ImageGlass.Common.Loggers;
 using ImageGlass.Common.Photoing;
 using ImageGlass.Common.Types;
 using SkiaSharp;
@@ -224,6 +225,11 @@ public partial class ViewerControl
     {
         _liveHdrToneMapping.SetTrue();
 
+        // The HDR tool edits ImageGlass' SDR tone-mapped preview. Hide the native passthrough
+        // surface while the tool is active so its live adjustments remain visible.
+        Core.NativeHdrPresenter?.Hide();
+        InvalidateVisual();
+
         // capture the raw frame in the background WITHOUT touching the display, so opening the tool
         // never disturbs the current image (no reload -> no blank) and slider changes are instant
         _ = EnsureHdrSourceCapturedAsync();
@@ -239,8 +245,20 @@ public partial class ViewerControl
         _liveHdrToneMapping.SetFalse();
         lock (_lock)
         {
-            SKImageRef.Set(ref _imgHdrSource, null);
+            // _imgHdrSource is shared with the Windows native HDR presenter for scRGB images.
+            // Keep it alive after the HDR tool closes when the platform presenter may still need
+            // the pre-tone-map frame; other HDR formats retain the previous release behavior.
+            var keepForNativeHdr = Core.NativeHdrPresenter is not null
+                && Photo?.Metadata.HdrTransferFn == HdrTransferFunction.ScRgb;
+
+            if (!keepForNativeHdr)
+            {
+                SKImageRef.Set(ref _imgHdrSource, null);
+            }
         }
+
+        // Re-evaluate native HDR now that the editing preview no longer owns presentation.
+        InvalidateVisual();
     }
 
 
@@ -549,6 +567,26 @@ public partial class ViewerControl
             var srcImage = (_imgRender ?? _imgSource)?.Image;
             var rotatedImage = SkiaCodec.RotateImage(srcImage, degree);
             if (rotatedImage.IsDisposed()) return false;
+
+            // Native HDR must use the exact same geometric coordinate space as the Avalonia
+            // render image. Keeping the original unrotated _imgHdrSource while BitmapSize/SrcRect
+            // are rotated makes pan rectangles sample the wrong axes and produces stretch/squash.
+            if (_imgHdrSource?.Image is { } hdrSource && !hdrSource.IsDisposed())
+            {
+                var rotatedHdrImage = SkiaCodec.RotateImage(hdrSource, degree);
+                if (rotatedHdrImage.IsDisposed())
+                {
+                    // Never present mismatched geometry. Fall back to Avalonia SDR for this edit
+                    // if the HDR-preserving rotation could not be produced.
+                    SKImageRef.Set(ref _imgHdrSource, null);
+                }
+                else
+                {
+                    SKImageRef.Set(ref _imgHdrSource, rotatedHdrImage);
+                    PhotoTrace.Mark("native-hdr:rotate", Photo?.FilePath,
+                        $"degree={degree:0.###}, hdr={rotatedHdrImage.Width}x{rotatedHdrImage.Height}/{rotatedHdrImage.ColorType}");
+                }
+            }
 
             // update the render cache, keep _imgSource intact
             SKImageRef.Set(ref _imgRender, rotatedImage);

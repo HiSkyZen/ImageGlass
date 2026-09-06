@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 using Avalonia.Controls;
+using ImageGlass.Common.Loggers;
 using ImageGlass.Common.ServiceProviders;
 using ImageGlass.Common.Types;
 using System;
@@ -114,6 +115,8 @@ public partial class Win32ColorProfileProvider : PhDisposable, IWindowColorProfi
 
         // get current monitor
         _currentMonitor = GetMonitorFromWindow(_windowHandle);
+        PhotoTrace.Mark("native-hdr:display-init", null,
+            $"window=0x{_windowHandle:X}, monitor=0x{_currentMonitor:X}");
 
         // load profile of the monitor
         UpdateColorProfile();
@@ -173,6 +176,9 @@ public partial class Win32ColorProfileProvider : PhDisposable, IWindowColorProfi
         // get profile of the monitor
         ProfilePath = GetColorProfilePath(_currentMonitor);
         IsHdr = IsHdrEnabled(_currentMonitor);
+
+        PhotoTrace.Mark("native-hdr:display-probe", null,
+            $"monitor=0x{_currentMonitor:X}, isHdr={IsHdr}, profile={(string.IsNullOrEmpty(ProfilePath) ? "none" : ProfilePath)}");
 
         Changed?.Invoke(this, new ColorProfileChangedEventArgs(ProfilePath, IsHdr));
     }

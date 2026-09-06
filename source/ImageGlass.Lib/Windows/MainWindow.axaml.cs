@@ -82,6 +82,16 @@ public partial class MainWindow : PhWindow
 
 
 
+    /// <summary>
+    /// Requests a viewer redraw so platform presentation layers can re-evaluate output-specific
+    /// state such as HDR / Advanced Color after a monitor transition.
+    /// </summary>
+    protected void RefreshViewerPresentation()
+    {
+        PART_MainView.PART_Viewer.InvalidateVisual();
+    }
+
+
     #region Override Methods
 
 
