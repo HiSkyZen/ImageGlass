@@ -682,21 +682,33 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             accentStrokeBrush,
             (float)((isPressed ? 1.5 : 1.0) * renderScaling));
 
-        // Theme nav icons are chevron-style arrows. Draw the same compact 50%-sized glyph
-        // geometrically so the native HWND needs no separate SVG parser or input surface.
+        // Kobe's ViewPreviousImage/ViewNextImage SVGs are compact arrows with a horizontal
+        // stem, rendered at 50% of the button size. Mirror that geometry natively.
         var iconW = w * 0.5;
         var iconH = h * 0.5;
-        var cx2 = x + w / 2.0;
-        var cy2 = y + h / 2.0;
-        var tipX = cx2 + (isLeft ? -iconW * 0.16 : iconW * 0.16);
-        var tailX = cx2 + (isLeft ? iconW * 0.16 : -iconW * 0.16);
-        var top = new Vector2((float)tailX, (float)(cy2 - iconH * 0.28));
+        var iconX = x + (w - iconW) / 2.0;
+        var iconY = y + (h - iconH) / 2.0;
+        var cy2 = iconY + iconH / 2.0;
+
+        var tipX = isLeft
+            ? iconX + iconW * 0.05
+            : iconX + iconW * 0.95;
+        var headBaseX = isLeft
+            ? iconX + iconW * 0.45
+            : iconX + iconW * 0.55;
+        var stemEndX = isLeft
+            ? iconX + iconW * 0.95
+            : iconX + iconW * 0.05;
+
+        var top = new Vector2((float)headBaseX, (float)(cy2 - iconH * 0.40));
         var tip = new Vector2((float)tipX, (float)cy2);
-        var bottom = new Vector2((float)tailX, (float)(cy2 + iconH * 0.28));
-        var iconStroke = (float)Math.Max(1.5, 2.4 * renderScaling);
+        var bottom = new Vector2((float)headBaseX, (float)(cy2 + iconH * 0.40));
+        var stemEnd = new Vector2((float)stemEndX, (float)cy2);
+        var iconStroke = (float)Math.Max(1.0, 1.25 * renderScaling);
 
         _d2dContext.DrawLine(top, tip, iconBrush, iconStroke);
         _d2dContext.DrawLine(tip, bottom, iconBrush, iconStroke);
+        _d2dContext.DrawLine(tip, stemEnd, iconBrush, iconStroke);
     }
 
 
