@@ -10,6 +10,7 @@ the Free Software Foundation, either version 3 of the License, or
 */
 using Avalonia;
 using Avalonia.Controls;
+using ImageGlass.Common;
 using ImageGlass.Common.Extensions;
 using ImageGlass.Common.Loggers;
 using ImageGlass.Common.Photoing;
@@ -108,7 +109,10 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     private int _windowWidth;
     private int _windowHeight;
     private Avalonia.Rect _lastSourceRect;
+    private Avalonia.Rect _lastDestinationRect;
     private bool _hasLastSourceRect;
+    private bool _hasLastDestinationRect;
+    private long _lastNavRevision = long.MinValue;
 
 
     public bool IsInitialized { get; private set; }
@@ -172,6 +176,7 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         PhotoMetadata metadata,
         Avalonia.Rect sourceRect,
         Avalonia.Rect destinationRect,
+        NativeHdrNavOverlayState navOverlay,
         double renderScaling)
     {
         var eligible = CanPresent(metadata);
@@ -241,9 +246,12 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             }
 
             var sourceRectChanged = !_hasLastSourceRect || _lastSourceRect != sourceRect;
-            if (sourceChanged || sourceRectChanged || sizeChanged || !IsPresenting)
+            var destinationRectChanged = !_hasLastDestinationRect || _lastDestinationRect != destinationRect;
+            var navChanged = _lastNavRevision != navOverlay.Revision;
+
+            if (sourceChanged || sourceRectChanged || destinationRectChanged || navChanged || sizeChanged || !IsPresenting)
             {
-                Draw(sourceRect, width, height);
+                Draw(sourceRect, destinationRect, navOverlay, width, height, renderScaling);
             }
 
             if (!IsPresenting)
@@ -257,7 +265,10 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             }
 
             _lastSourceRect = sourceRect;
+            _lastDestinationRect = destinationRect;
             _hasLastSourceRect = true;
+            _hasLastDestinationRect = true;
+            _lastNavRevision = navOverlay.Revision;
             return true;
         }
         catch (Exception ex)
@@ -291,6 +302,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _sourceTexture = null;
         _sourceIdentity = null;
         _hasLastSourceRect = false;
+        _hasLastDestinationRect = false;
+        _lastNavRevision = long.MinValue;
 
         IsPresenting = false;
     }
@@ -538,7 +551,13 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     }
 
 
-    private void Draw(Avalonia.Rect sourceRect, int width, int height)
+    private void Draw(
+        Avalonia.Rect sourceRect,
+        Avalonia.Rect destinationRect,
+        NativeHdrNavOverlayState navOverlay,
+        int width,
+        int height,
+        double renderScaling)
     {
         if (_d2dContext is null || _sourceBitmap is null || _swapChain is null)
         {
@@ -553,15 +572,12 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             (float)sourceRect.Height);
 
         PhotoTrace.Mark("native-hdr:draw-begin", null,
-            $"target={width}x{height}, src={src}, dest={dest}");
+            $"target={width}x{height}, src={src}, dest={dest}, navRev={navOverlay.Revision}");
 
         _d2dContext.BeginDraw();
         _d2dContext.Transform = Matrix3x2.Identity;
         _d2dContext.Clear(new Color4(0, 0, 0, 1));
 
-        // Use the ID2D1RenderTarget bitmap path rather than ID2D1DeviceContext's perspective
-        // overload. We only need axis-aligned crop + scale here; the older linear path is simpler
-        // and avoids driver/API validation around the optional 4x4 perspective transform.
         ((ID2D1RenderTarget)_d2dContext).DrawBitmap(
             _sourceBitmap,
             new Vortice.Mathematics.Rect(
@@ -577,16 +593,121 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
                 src.Width,
                 src.Height));
 
+        DrawNavigationOverlay(destinationRect, navOverlay, renderScaling);
+
         PhotoTrace.Mark("native-hdr:draw-issued", null, "DrawBitmap queued");
 
         var endDraw = _d2dContext.EndDraw();
         PhotoTrace.Mark("native-hdr:draw-end", null, $"result={endDraw}");
         endDraw.CheckError();
 
-        // DWM performs composition; Present(0) avoids blocking the Avalonia UI thread on v-sync.
         var present = _swapChain.Present(0, PresentFlags.None);
         PhotoTrace.Mark("native-hdr:present", null, $"result={present}");
         present.CheckError();
+    }
+
+
+    private void DrawNavigationOverlay(
+        Avalonia.Rect destinationRect,
+        NativeHdrNavOverlayState navOverlay,
+        double renderScaling)
+    {
+        if (_d2dContext is null || !navOverlay.Enabled) return;
+
+        DrawNavigationButton(
+            navOverlay.LeftButtonRect,
+            destinationRect,
+            navOverlay.LeftProgress,
+            navOverlay.LeftPressed,
+            isLeft: true,
+            renderScaling);
+
+        DrawNavigationButton(
+            navOverlay.RightButtonRect,
+            destinationRect,
+            navOverlay.RightProgress,
+            navOverlay.RightPressed,
+            isLeft: false,
+            renderScaling);
+    }
+
+
+    private void DrawNavigationButton(
+        Avalonia.Rect viewerButtonRect,
+        Avalonia.Rect destinationRect,
+        double progress,
+        bool isPressed,
+        bool isLeft,
+        double renderScaling)
+    {
+        if (_d2dContext is null || progress <= 0) return;
+
+        var opacity = Math.Clamp(progress, 0, 1);
+        var slideLogical = 10.0 * (1.0 - opacity) * (isLeft ? 1.0 : -1.0);
+
+        var x = (viewerButtonRect.X + slideLogical - destinationRect.X) * renderScaling;
+        var y = (viewerButtonRect.Y - destinationRect.Y) * renderScaling;
+        var w = viewerButtonRect.Width * renderScaling;
+        var h = viewerButtonRect.Height * renderScaling;
+
+        if (isPressed)
+        {
+            const double pressScale = 0.95;
+            var cx = x + w / 2.0;
+            var cy = y + h / 2.0;
+            w *= pressScale;
+            h *= pressScale;
+            x = cx - w / 2.0;
+            y = cy - h / 2.0;
+        }
+
+        var center = new Vector2(
+            (float)(x + w / 2.0),
+            (float)(y + h / 2.0));
+        var ellipse = new Ellipse(center, (float)(w / 2.0), (float)(h / 2.0));
+
+        using var baseBrush = _d2dContext.CreateSolidColorBrush(
+            ToColor4(Core.Theme.BaseColor, 120, opacity));
+        using var accentFillBrush = _d2dContext.CreateSolidColorBrush(
+            ToColor4(Core.AccentColor, isPressed ? (byte)180 : (byte)120, opacity));
+        using var accentStrokeBrush = _d2dContext.CreateSolidColorBrush(
+            ToColor4(Core.AccentColor, 100, opacity));
+        using var iconBrush = _d2dContext.CreateSolidColorBrush(
+            ToColor4(Core.Theme.InvertedBaseColor, 255, opacity));
+
+        _d2dContext.FillEllipse(ellipse, baseBrush);
+        _d2dContext.FillEllipse(ellipse, accentFillBrush);
+        _d2dContext.DrawEllipse(
+            ellipse,
+            accentStrokeBrush,
+            (float)((isPressed ? 1.5 : 1.0) * renderScaling));
+
+        // Theme nav icons are chevron-style arrows. Draw the same compact 50%-sized glyph
+        // geometrically so the native HWND needs no separate SVG parser or input surface.
+        var iconW = w * 0.5;
+        var iconH = h * 0.5;
+        var cx2 = x + w / 2.0;
+        var cy2 = y + h / 2.0;
+        var tipX = cx2 + (isLeft ? -iconW * 0.16 : iconW * 0.16);
+        var tailX = cx2 + (isLeft ? iconW * 0.16 : -iconW * 0.16);
+        var top = new Vector2((float)tailX, (float)(cy2 - iconH * 0.28));
+        var tip = new Vector2((float)tipX, (float)cy2);
+        var bottom = new Vector2((float)tailX, (float)(cy2 + iconH * 0.28));
+        var iconStroke = (float)Math.Max(1.5, 2.4 * renderScaling);
+
+        _d2dContext.DrawLine(top, tip, iconBrush, iconStroke);
+        _d2dContext.DrawLine(tip, bottom, iconBrush, iconStroke);
+    }
+
+
+    private static Color4 ToColor4(Avalonia.Media.Color color, byte alpha, double opacity)
+    {
+        var a = (float)(alpha / 255.0 * Math.Clamp(opacity, 0, 1));
+        return new Color4(
+            color.R / 255.0f,
+            color.G / 255.0f,
+            color.B / 255.0f,
+            a);
     }
 
 
@@ -638,6 +759,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _sourceTexture = null;
         _sourceIdentity = null;
         _hasLastSourceRect = false;
+        _hasLastDestinationRect = false;
+        _lastNavRevision = long.MinValue;
 
         ReleaseTargetBitmap();
 
