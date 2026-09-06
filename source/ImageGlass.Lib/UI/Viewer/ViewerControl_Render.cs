@@ -53,6 +53,10 @@ public partial class ViewerControl
     private SKImageRef? _imgHdrSource;
     private InterlockedBool _liveHdrToneMapping = new(false);
 
+    // Last native-HDR eligibility state emitted to PhotoTrace. Viewer Render() can run frequently,
+    // so only state transitions are logged.
+    private string? _nativeHdrTraceState;
+
     // coalescing state for the background HDR re-tone-map pump (latest-request-wins)
     private volatile bool _hdrDirty;
     private int _hdrActive;
@@ -217,13 +221,17 @@ public partial class ViewerControl
     public void RefreshNativeHdrPresentation()
     {
         var presenter = Core.NativeHdrPresenter;
-        if (presenter is null) return;
+        if (presenter is null)
+        {
+            TraceNativeHdrState("no-presenter");
+            return;
+        }
 
         SKImageRef.ImageLease? hdrLease = null;
         PhotoMetadata? metadata;
         Rect sourceRect;
         Rect destinationRect;
-        var shouldHide = false;
+        string? blockReason = null;
 
         try
         {
@@ -233,30 +241,42 @@ public partial class ViewerControl
                 sourceRect = SrcRect;
                 destinationRect = DestRect;
 
-                if (metadata is null
-                    || _animator is not null
-                    || IsVectorSource()
-                    || _liveHdrToneMapping
-                    || EnableSelection
-                    || _imgHdrSource is null)
-                {
-                    shouldHide = true;
-                }
+                if (metadata is null) blockReason = "no-metadata";
+                else if (_animator is not null) blockReason = "animation";
+                else if (IsVectorSource()) blockReason = "vector";
+                else if (_liveHdrToneMapping) blockReason = "live-tone-mapping";
+                else if (EnableSelection) blockReason = "selection";
+                else if (_imgHdrSource is null) blockReason = "no-raw-hdr-frame";
                 else
                 {
                     hdrLease = _imgHdrSource.Acquire();
-                    shouldHide = hdrLease is null;
+                    if (hdrLease is null) blockReason = "raw-hdr-lease-failed";
                 }
             }
 
-            if (!shouldHide && hdrLease is not null && metadata is not null)
+            if (blockReason is not null)
+            {
+                TraceNativeHdrState($"blocked:{blockReason}; transfer={metadata?.HdrTransferFn}; isHdr={metadata?.IsHdr}; src={sourceRect}; dst={destinationRect}");
+            }
+            else if (hdrLease is not null && metadata is not null)
             {
                 var image = hdrLease.Image;
-                if (!image.IsDisposed()
-                    && presenter.CanPresent(metadata)
-                    && presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, Dpi))
+                if (image.IsDisposed())
                 {
+                    TraceNativeHdrState("blocked:raw-hdr-disposed");
+                }
+                else if (!presenter.CanPresent(metadata))
+                {
+                    TraceNativeHdrState($"blocked:presenter-ineligible; transfer={metadata.HdrTransferFn}; isHdr={metadata.IsHdr}; raw={image.Width}x{image.Height}/{image.ColorType}");
+                }
+                else if (presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, Dpi))
+                {
+                    TraceNativeHdrState($"active; raw={image.Width}x{image.Height}/{image.ColorType}; src={sourceRect}; dst={destinationRect}; dpi={Dpi:0.###}");
                     return;
+                }
+                else
+                {
+                    TraceNativeHdrState($"blocked:presenter-failed; raw={image.Width}x{image.Height}/{image.ColorType}");
                 }
             }
         }
@@ -266,6 +286,15 @@ public partial class ViewerControl
         }
 
         presenter.Hide();
+    }
+
+
+    private void TraceNativeHdrState(string state)
+    {
+        if (string.Equals(_nativeHdrTraceState, state, StringComparison.Ordinal)) return;
+
+        _nativeHdrTraceState = state;
+        PhotoTrace.Mark("native-hdr:viewer", Photo?.FilePath, state);
     }
 
 
