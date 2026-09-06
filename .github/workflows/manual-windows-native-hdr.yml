@@ -1,0 +1,50 @@
+name: Manual Windows Native HDR Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Windows architecture to build
+        required: true
+        type: choice
+        default: win-x64
+        options:
+          - win-x64
+          - win-arm64
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve platform
+        id: platform
+        shell: pwsh
+        run: |
+          if ("${{ inputs.architecture }}" -eq "win-arm64") {
+            "value=ARM64" >> $env:GITHUB_OUTPUT
+          }
+          else {
+            "value=x64" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Restore
+        run: >
+          dotnet restore source/ImageGlass.Win32/ImageGlass.Win32.csproj
+          -r ${{ inputs.architecture }}
+          -p:Platform=${{ steps.platform.outputs.value }}
+
+      - name: Publish NativeAOT
+        run: >
+          dotnet publish source/ImageGlass.Win32/ImageGlass.Win32.csproj
+          -c Release
+          -r ${{ inputs.architecture }}
+          -p:Platform=${{ steps.platform.outputs.value }}
+          --no-restore
+          -o artifacts/native-hdr-${{ inputs.architecture }}
