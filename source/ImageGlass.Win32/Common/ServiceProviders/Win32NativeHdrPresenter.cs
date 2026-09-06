@@ -26,6 +26,7 @@ using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 using D2D = Vortice.Direct2D1.D2D1;
+using D2DInterpolationMode = Vortice.Direct2D1.InterpolationMode;
 using D2DAlphaMode = Vortice.DCommon.AlphaMode;
 using D2DPixelFormat = Vortice.DCommon.PixelFormat;
 using D3DFeatureLevel = Vortice.Direct3D.FeatureLevel;
@@ -464,7 +465,7 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             _sourceBitmap,
             dest,
             1.0f,
-            InterpolationMode.HighQualityCubic,
+            D2DInterpolationMode.HighQualityCubic,
             src,
             Matrix4x4.Identity);
         _d2dContext.EndDraw().CheckError();
