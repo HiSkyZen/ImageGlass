@@ -48,3 +48,9 @@ jobs:
           -p:Platform=${{ steps.platform.outputs.value }}
           --no-restore
           -o artifacts/native-hdr-${{ inputs.architecture }}
+      - name: Copy shared app assets
+        shell: pwsh
+        run: |
+          Copy-Item -Path 'source/__assets/__app/*' `
+            -Destination 'artifacts/native-hdr-${{ inputs.architecture }}' `
+            -Recurse -Force
