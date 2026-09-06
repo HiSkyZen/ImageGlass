@@ -98,6 +98,7 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     private ID2D1DeviceContext? _d2dContext;
     private ID2D1Bitmap1? _targetBitmap;
     private ID2D1Bitmap1? _sourceBitmap;
+    private ID3D11Texture2D? _sourceTexture;
 
     private SKImage? _sourceIdentity;
     private int _pixelWidth;
@@ -286,6 +287,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         // cheaper than letting an arbitrarily large HDR bitmap linger in VRAM.
         _sourceBitmap?.Dispose();
         _sourceBitmap = null;
+        _sourceTexture?.Dispose();
+        _sourceTexture = null;
         _sourceIdentity = null;
         _hasLastSourceRect = false;
 
@@ -368,6 +371,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _d2dDevice = _d2dFactory.CreateDevice(dxgiDevice);
         _d2dContext = _d2dDevice.CreateDeviceContext(DeviceContextOptions.None);
         _d2dContext.UnitMode = UnitMode.Pixels;
+
+        PhotoTrace.Mark("native-hdr:d2d-format", null,
+            $"format={Format.R16G16B16A16_Float}, supported={_d2dContext.IsDxgiFormatSupported(Format.R16G16B16A16_Float)}, maxBitmap={_d2dContext.MaximumBitmapSize}");
     }
 
 
@@ -467,9 +473,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
 
     private void UploadSource(SKImage image)
     {
-        if (_d2dContext is null)
+        if (_device is null || _d2dContext is null)
         {
-            throw new InvalidOperationException("Direct2D device context is unavailable.");
+            throw new InvalidOperationException("D3D11 / Direct2D device resources are unavailable.");
         }
 
         using var pixmap = image.PeekPixels();
@@ -487,19 +493,46 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
                 $"Unsupported native HDR source format: {pixmap.ColorType}.");
         }
 
+        // Do not use ID2D1DeviceContext.CreateBitmap(sourceData, ...) here. Although the device
+        // context supports R16G16B16A16_FLOAT, some drivers reject CPU-initialized high-color
+        // D2D bitmaps with E_INVALIDARG. Upload the exact FP16 bytes into a D3D11 texture first,
+        // then share that texture with Direct2D through IDXGISurface. This is also the natural
+        // path for future zero-copy codec output.
         _sourceBitmap?.Dispose();
+        _sourceBitmap = null;
+        _sourceTexture?.Dispose();
+        _sourceTexture = null;
 
+        var textureDesc = new Texture2DDescription(
+            Format.R16G16B16A16_Float,
+            checked((uint)image.Width),
+            checked((uint)image.Height),
+            arraySize: 1,
+            mipLevels: 1,
+            bindFlags: BindFlags.ShaderResource,
+            usage: ResourceUsage.Default,
+            cpuAccessFlags: CpuAccessFlags.None,
+            sampleCount: 1,
+            sampleQuality: 0,
+            miscFlags: ResourceOptionFlags.None);
+
+        var rowPitch = checked((uint)pixmap.RowBytes);
+        var slicePitch = checked(rowPitch * (uint)image.Height);
+        var initialData = new SubresourceData(pixmap.GetPixels(), rowPitch, slicePitch);
+
+        _sourceTexture = _device.CreateTexture2D(textureDesc, initialData);
+
+        using var sourceSurface = _sourceTexture.QueryInterface<IDXGISurface>();
         var properties = new BitmapProperties1(
             new D2DPixelFormat(Format.R16G16B16A16_Float, D2DAlphaMode.Ignore),
             96.0f,
             96.0f,
             BitmapOptions.None);
 
-        _sourceBitmap = _d2dContext.CreateBitmap(
-            new SizeI(image.Width, image.Height),
-            pixmap.GetPixels(),
-            checked((uint)pixmap.RowBytes),
-            properties);
+        _sourceBitmap = _d2dContext.CreateBitmapFromDxgiSurface(sourceSurface, properties);
+
+        PhotoTrace.Mark("native-hdr:source-ready", null,
+            $"d3d11Texture={image.Width}x{image.Height}/{Format.R16G16B16A16_Float}, rowPitch={rowPitch}");
 
         _sourceIdentity = image;
     }
@@ -580,6 +613,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     {
         _sourceBitmap?.Dispose();
         _sourceBitmap = null;
+        _sourceTexture?.Dispose();
+        _sourceTexture = null;
         _sourceIdentity = null;
         _hasLastSourceRect = false;
 
