@@ -621,6 +621,8 @@ public partial class ViewerControl : PhControl
             DisposeVectorResources();
 
             // dispose native bitmap
+            Core.NativeHdrPresenter?.Hide();
+
             SKImageRef.Set(ref _imgSource, null);
             SKImageRef.Set(ref _imgRender, null);
             SKImageRef.Set(ref _imgHdrSource, null);
@@ -1016,6 +1018,11 @@ public partial class ViewerControl : PhControl
                     var frameToLoad = (uint)Math.Max(0, e.Photo.FrameIndex);
                     imgFrame = await e.Photo.GetFrameAsync(frameToLoad);
 
+                    // The native Windows HDR presenter needs the pre-tone-map scRGB frame.
+                    // Keep the existing SDR color-managed frame too: it remains visible underneath
+                    // the native child HWND and is the immediate fallback if DXGI presentation fails.
+                    var retainForNativeHdr = Core.NativeHdrPresenter?.CanPresent(e.Photo.Metadata) == true;
+
                     // apply color space off the UI thread; the pin keeps the frame alive if the
                     // user navigates away mid-pass
                     SKImage? imgFrameColored;
@@ -1027,11 +1034,13 @@ public partial class ViewerControl : PhControl
                     if (imgFrameColored is not null)
                     {
                         PhotoTrace.Mark("viewer:color-managed", e.Photo.FilePath,
-                            $"applied (hdrToneMap={Core.Config.EnableHdrToneMapping && e.Photo.Metadata.IsHdr}, srcProfile={(string.IsNullOrEmpty(e.Photo.Metadata.ColorProfileName) ? "none" : e.Photo.Metadata.ColorProfileName)})");
+                            $"applied (hdrToneMap={Core.Config.EnableHdrToneMapping && e.Photo.Metadata.IsHdr}, srcProfile={(string.IsNullOrEmpty(e.Photo.Metadata.ColorProfileName) ? "none" : e.Photo.Metadata.ColorProfileName)}, nativeHdr={retainForNativeHdr})");
 
-                        // retain the pre-tone-map HDR frame for live re-tone-mapping, else free it
-                        // (never dispose the clipboard photo's frame)
-                        if (_liveHdrToneMapping && e.Photo.Metadata.IsHdr && !e.Photo.IsClipboard)
+                        // retain the pre-tone-map HDR frame for live re-tone-mapping or native HDR,
+                        // else free it (never dispose the clipboard photo's frame)
+                        if ((_liveHdrToneMapping || retainForNativeHdr)
+                            && e.Photo.Metadata.IsHdr
+                            && !e.Photo.IsClipboard)
                         {
                             hdrRawToRetain = imgFrame;
                         }
@@ -1044,7 +1053,15 @@ public partial class ViewerControl : PhControl
                     }
                     else
                     {
-                        PhotoTrace.Mark("viewer:color-managed", e.Photo.FilePath, "skipped");
+                        // Pass-through HDR mode can leave the raw frame as _imgSource. Native HDR
+                        // still needs an owned reference to identify it unambiguously as pre-tone-map.
+                        if (retainForNativeHdr && e.Photo.Metadata.IsHdr && !e.Photo.IsClipboard)
+                        {
+                            hdrRawToRetain = imgFrame;
+                        }
+
+                        PhotoTrace.Mark("viewer:color-managed", e.Photo.FilePath,
+                            $"skipped (nativeHdr={retainForNativeHdr})");
                     }
 
                     // IsDisposed, not null: a dead frame renders nothing yet claims the photo is shown
@@ -1086,8 +1103,10 @@ public partial class ViewerControl : PhControl
                         _isFirstDraw.SetTrue();
                         SKImageRef.Set(ref _imgSource, imgFrame);
 
-                        // keep (or clear) the retained raw HDR frame for live re-tone-mapping
-                        SKImageRef.Set(ref _imgHdrSource, hdrRawToRetain);
+                        // Keep (or clear) the retained raw HDR frame. shareFrom prevents a
+                        // double-dispose when HDR tone mapping is disabled and both fields point
+                        // at the same pass-through SKImage.
+                        SKImageRef.Set(ref _imgHdrSource, hdrRawToRetain, _imgSource);
                     }
 
 
