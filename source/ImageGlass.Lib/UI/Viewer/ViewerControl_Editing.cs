@@ -239,7 +239,16 @@ public partial class ViewerControl
         _liveHdrToneMapping.SetFalse();
         lock (_lock)
         {
-            SKImageRef.Set(ref _imgHdrSource, null);
+            // _imgHdrSource is shared with the Windows native HDR presenter for scRGB images.
+            // Keep it alive after the HDR tool closes when the platform presenter may still need
+            // the pre-tone-map frame; other HDR formats retain the previous release behavior.
+            var keepForNativeHdr = Core.NativeHdrPresenter is not null
+                && Photo?.Metadata.HdrTransferFn == HdrTransferFunction.ScRgb;
+
+            if (!keepForNativeHdr)
+            {
+                SKImageRef.Set(ref _imgHdrSource, null);
+            }
         }
     }
 
