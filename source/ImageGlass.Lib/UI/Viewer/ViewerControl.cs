@@ -210,6 +210,8 @@ public partial class ViewerControl : PhControl
         else if (e.Property == EnableNavButtonsProperty)
         {
             _navButtons.IsEnabled = (bool)e.NewValue!;
+            unchecked { _navButtons.NativeVisualRevision++; }
+            RefreshNativeHdrPresentation();
         }
     }
 
