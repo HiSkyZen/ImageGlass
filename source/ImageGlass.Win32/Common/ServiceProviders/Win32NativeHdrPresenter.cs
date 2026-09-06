@@ -11,6 +11,7 @@ the Free Software Foundation, either version 3 of the License, or
 using Avalonia;
 using Avalonia.Controls;
 using ImageGlass.Common.Extensions;
+using ImageGlass.Common.Loggers;
 using ImageGlass.Common.Photoing;
 using ImageGlass.Common.ServiceProviders;
 using ImageGlass.Common.Types;
@@ -110,18 +111,30 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
 
     public void Initialize(Window window, bool displayHdrEnabled)
     {
-        if (IsInitialized) return;
+        if (IsInitialized)
+        {
+            PhotoTrace.Mark("native-hdr:init", null,
+                $"already initialized hwnd=0x{_parentHwnd:X}, displayHdr={_displayHdrEnabled}");
+            return;
+        }
 
         _window = window;
         _parentHwnd = window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
         _displayHdrEnabled = displayHdrEnabled;
         IsInitialized = _parentHwnd != IntPtr.Zero;
+
+        PhotoTrace.Mark("native-hdr:init", null,
+            $"disabled={NativeHdrDisabled}, hwnd=0x{_parentHwnd:X}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}");
     }
 
 
     public void OnDisplayChanged(bool displayHdrEnabled)
     {
+        var old = _displayHdrEnabled;
         _displayHdrEnabled = displayHdrEnabled;
+
+        PhotoTrace.Mark("native-hdr:display", null,
+            $"hdr {old} -> {_displayHdrEnabled}, initialized={IsInitialized}, presenting={IsPresenting}");
 
         // DXGI color-space support is output-dependent. Tear down presentation resources on every
         // monitor / Advanced Color transition so the next frame renegotiates the swapchain.
@@ -139,6 +152,13 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     }
 
 
+    private string DescribeEligibility(PhotoMetadata metadata)
+    {
+        return $"disabled={NativeHdrDisabled}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}, "
+            + $"transfer={metadata.HdrTransferFn}, isHdr={metadata.IsHdr}, canPresent={CanPresent(metadata)}";
+    }
+
+
     public bool TryPresent(
         Control host,
         SKImage image,
@@ -147,13 +167,21 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         Avalonia.Rect destinationRect,
         double renderScaling)
     {
-        if (!CanPresent(metadata)
-            || image.IsDisposed()
+        var eligible = CanPresent(metadata);
+        var disposed = image.IsDisposed();
+        var supportedColorType = image.ColorType is SKColorType.RgbaF16 or SKColorType.RgbaF16Clamped;
+
+        if (!eligible
+            || disposed
             || sourceRect.IsEmpty
             || destinationRect.IsEmpty
             || renderScaling <= 0
-            || image.ColorType is not (SKColorType.RgbaF16 or SKColorType.RgbaF16Clamped))
+            || !supportedColorType)
         {
+            PhotoTrace.Mark("native-hdr:reject", metadata.FilePath,
+                $"{DescribeEligibility(metadata)}, image={image.Width}x{image.Height}/{image.ColorType}, disposed={disposed}, "
+                + $"src={sourceRect}, dst={destinationRect}, dpi={renderScaling:0.###}");
+
             Hide();
             return false;
         }
@@ -161,6 +189,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         if (_window is null
             || host.TranslatePoint(destinationRect.Position, _window) is not { } windowPoint)
         {
+            PhotoTrace.Mark("native-hdr:reject", metadata.FilePath,
+                $"coordinate translation failed, windowNull={_window is null}, dst={destinationRect}");
+
             Hide();
             return false;
         }
@@ -182,6 +213,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
 
             if (_swapChain is null)
             {
+                PhotoTrace.Mark("native-hdr:swapchain-create", metadata.FilePath,
+                    $"{width}x{height}, source={image.Width}x{image.Height}/{image.ColorType}");
                 CreateSwapChain(width, height);
                 sizeChanged = false;
             }
@@ -195,6 +228,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             var sourceChanged = !ReferenceEquals(_sourceIdentity, image) || _sourceBitmap is null;
             if (sourceChanged)
             {
+                PhotoTrace.Mark("native-hdr:upload", metadata.FilePath,
+                    $"{image.Width}x{image.Height}/{image.ColorType}");
                 UploadSource(image);
             }
 
@@ -208,6 +243,10 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             {
                 _ = ShowWindow(_childHwnd, SW_SHOWNA);
                 IsPresenting = true;
+
+                PhotoTrace.Mark("native-hdr:presenting", metadata.FilePath,
+                    $"hwnd=0x{_childHwnd:X}, swapchain={_pixelWidth}x{_pixelHeight}, "
+                    + $"src={sourceRect}, dst={destinationRect}, dpi={renderScaling:0.###}");
             }
 
             _lastSourceRect = sourceRect;
@@ -216,6 +255,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         }
         catch (Exception ex)
         {
+            PhotoTrace.Mark("native-hdr:error", metadata.FilePath,
+                $"{ex.GetType().Name}: {ex.Message}; {DescribeEligibility(metadata)}");
+
             System.Diagnostics.Debug.WriteLine(
                 $"[NativeHDR] presentation failed: {ex.GetType().Name}: {ex.Message}");
 
@@ -275,6 +317,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         var style = WS_CHILD | WS_DISABLED | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
         var exStyle = WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
 
+        PhotoTrace.Mark("native-hdr:hwnd-create", null,
+            $"parent=0x{_parentHwnd:X}");
+
         _childHwnd = CreateWindowExW(
             exStyle,
             "STATIC",
@@ -299,6 +344,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
 
     private void CreateDeviceResources()
     {
+        PhotoTrace.Mark("native-hdr:d3d-device", null, "creating hardware D3D11 device");
+
         _device = Vortice.Direct3D11.D3D11.D3D11CreateDevice(
             DriverType.Hardware,
             DeviceCreationFlags.BgraSupport,
@@ -352,12 +399,17 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             ?? throw new NotSupportedException("IDXGISwapChain3 is unavailable.");
 
         var support = _swapChain3.CheckColorSpaceSupport(ColorSpaceType.RgbFullG10NoneP709);
+        PhotoTrace.Mark("native-hdr:colorspace", null,
+            $"requested={ColorSpaceType.RgbFullG10NoneP709}, support={support}");
+
         if ((support & SwapChainColorSpaceSupportFlags.Present) == 0)
         {
             throw new NotSupportedException("The current output cannot present FP16 scRGB.");
         }
 
         _swapChain3.SetColorSpace1(ColorSpaceType.RgbFullG10NoneP709);
+        PhotoTrace.Mark("native-hdr:colorspace-applied", null,
+            $"{ColorSpaceType.RgbFullG10NoneP709}, format={Format.R16G16B16A16_Float}");
 
         _pixelWidth = width;
         _pixelHeight = height;
@@ -419,6 +471,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         {
             throw new NotSupportedException("Native HDR currently requires a CPU-backed SKImage.");
         }
+
+        PhotoTrace.Mark("native-hdr:pixmap", null,
+            $"{pixmap.Width}x{pixmap.Height}, colorType={pixmap.ColorType}, alpha={pixmap.AlphaType}, rowBytes={pixmap.RowBytes}, colorSpace={(pixmap.ColorSpace is null ? "none" : pixmap.ColorSpace.ToString())}");
 
         if (pixmap.ColorType is not (SKColorType.RgbaF16 or SKColorType.RgbaF16Clamped))
         {
