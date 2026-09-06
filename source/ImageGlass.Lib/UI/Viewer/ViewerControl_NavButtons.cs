@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 using Avalonia;
+using ImageGlass.Common.ServiceProviders;
 using ImageGlass.Common.Types;
 
 namespace ImageGlass.UI.Viewer;
@@ -52,5 +53,22 @@ public partial class ViewerControl
     internal void OnNavButtonClicked(NavButtonDirection direction)
     {
         NavButtonClicked?.Invoke(this, new NavButtonClickedEventArgs(direction));
+    }
+
+
+    internal NativeHdrNavOverlayState GetNativeHdrNavOverlayState()
+    {
+        var enabled = EnableNavButtons && _navButtons.IsEnabled && !EnableSelection;
+        var bounds = Bounds.Size;
+
+        return new NativeHdrNavOverlayState(
+            Enabled: enabled,
+            Revision: _navButtons.NativeVisualRevision,
+            LeftProgress: _navButtons.LeftAnimationProgress,
+            RightProgress: _navButtons.RightAnimationProgress,
+            LeftPressed: _navButtons.IsLeftPressed && !_navButtons.IsDragging,
+            RightPressed: _navButtons.IsRightPressed && !_navButtons.IsDragging,
+            LeftButtonRect: NavButtonsInfo.GetLeftButtonRect(bounds),
+            RightButtonRect: NavButtonsInfo.GetRightButtonRect(bounds));
     }
 }
