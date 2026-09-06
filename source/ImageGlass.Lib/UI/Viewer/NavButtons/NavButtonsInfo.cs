@@ -85,6 +85,25 @@ internal class NavButtonsInfo
 
 
     /// <summary>
+    /// Current Avalonia animation progress for the left navigation button.
+    /// Mirrored by the native HDR presenter when HWND airspace covers this overlay.
+    /// </summary>
+    public double LeftAnimationProgress { get; set; } = 0;
+
+
+    /// <summary>
+    /// Current Avalonia animation progress for the right navigation button.
+    /// </summary>
+    public double RightAnimationProgress { get; set; } = 0;
+
+
+    /// <summary>
+    /// Monotonic revision of the native navigation visual snapshot.
+    /// </summary>
+    public long NativeVisualRevision { get; set; } = 0;
+
+
+    /// <summary>
     /// Cached SVG icon for the left arrow.
     /// </summary>
     public IImage? LeftIcon { get; set; } = null;
@@ -107,5 +126,19 @@ internal class NavButtonsInfo
         IsRightPressed = false;
         PointerDownPoint = null;
         IsDragging = false;
+    }
+
+
+    public static Rect GetLeftButtonRect(Size bounds)
+    {
+        var size = NAV_BTN_SIZE;
+        return new Rect(NAV_BTN_MARGIN, (bounds.Height - size.Height) / 2, size.Width, size.Height);
+    }
+
+
+    public static Rect GetRightButtonRect(Size bounds)
+    {
+        var size = NAV_BTN_SIZE;
+        return new Rect(bounds.Width - NAV_BTN_MARGIN - size.Width, (bounds.Height - size.Height) / 2, size.Width, size.Height);
     }
 }
