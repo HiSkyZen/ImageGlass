@@ -225,6 +225,14 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             _ = ShowWindow(_childHwnd, SW_HIDE);
         }
 
+        // Do not retain a full GPU copy of the previous photo while native presentation is hidden
+        // (for example after navigating to SDR content). Re-uploading on the next activation is
+        // cheaper than letting an arbitrarily large HDR bitmap linger in VRAM.
+        _sourceBitmap?.Dispose();
+        _sourceBitmap = null;
+        _sourceIdentity = null;
+        _hasLastSourceRect = false;
+
         IsPresenting = false;
     }
 
