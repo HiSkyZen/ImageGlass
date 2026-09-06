@@ -114,6 +114,10 @@ public class NavButtonsOverlay : PhControl
         }
 
         _animRunning = false;
+        _leftAnimProgress = 0;
+        _rightAnimProgress = 0;
+        PublishNativeVisualState(force: true);
+        _parentViewer = null;
     }
 
 
@@ -154,6 +158,7 @@ public class NavButtonsOverlay : PhControl
     protected override void OnIgDpiChanged()
     {
         base.OnIgDpiChanged();
+        PublishNativeVisualState(force: true);
         InvalidateVisual();
     }
 
