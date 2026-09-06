@@ -28,7 +28,9 @@ public readonly record struct NativeHdrNavOverlayState(
     bool LeftPressed,
     bool RightPressed,
     Rect LeftButtonRect,
-    Rect RightButtonRect);
+    Rect RightButtonRect,
+    string LeftIconPath,
+    string RightIconPath);
 
 /// <summary>
 /// Optional platform presenter that can place a decoded HDR raster on a native
