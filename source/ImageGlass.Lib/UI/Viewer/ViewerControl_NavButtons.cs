@@ -69,6 +69,8 @@ public partial class ViewerControl
             LeftPressed: _navButtons.IsLeftPressed && !_navButtons.IsDragging,
             RightPressed: _navButtons.IsRightPressed && !_navButtons.IsDragging,
             LeftButtonRect: NavButtonsInfo.GetLeftButtonRect(bounds),
-            RightButtonRect: NavButtonsInfo.GetRightButtonRect(bounds));
+            RightButtonRect: NavButtonsInfo.GetRightButtonRect(bounds),
+            LeftIconPath: _navButtons.LeftArrowSvgPath,
+            RightIconPath: _navButtons.RightArrowSvgPath);
     }
 }
