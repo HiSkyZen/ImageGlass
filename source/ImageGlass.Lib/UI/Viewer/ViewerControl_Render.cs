@@ -26,6 +26,7 @@ using ImageGlass.Common;
 using ImageGlass.Common.Extensions;
 using ImageGlass.Common.Loggers;
 using ImageGlass.Common.Photoing;
+using ImageGlass.Common.ServiceProviders;
 using ImageGlass.Common.Types;
 using ImageGlass.UI.Viewer.Checkerboard;
 using SkiaSharp;
@@ -231,6 +232,7 @@ public partial class ViewerControl
         PhotoMetadata? metadata;
         Rect sourceRect;
         Rect destinationRect;
+        NativeHdrNavOverlayState navOverlay;
         string? blockReason = null;
 
         try
@@ -240,6 +242,7 @@ public partial class ViewerControl
                 metadata = Photo?.Metadata;
                 sourceRect = SrcRect;
                 destinationRect = DestRect;
+                navOverlay = GetNativeHdrNavOverlayState();
 
                 if (metadata is null) blockReason = "no-metadata";
                 else if (_animator is not null) blockReason = "animation";
@@ -269,7 +272,7 @@ public partial class ViewerControl
                 {
                     TraceNativeHdrState($"blocked:presenter-ineligible; transfer={metadata.HdrTransferFn}; isHdr={metadata.IsHdr}; raw={image.Width}x{image.Height}/{image.ColorType}");
                 }
-                else if (presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, Dpi))
+                else if (presenter.TryPresent(this, image, metadata, sourceRect, destinationRect, navOverlay, Dpi))
                 {
                     TraceNativeHdrState($"active; raw={image.Width}x{image.Height}/{image.ColorType}; src={sourceRect}; dst={destinationRect}; dpi={Dpi:0.###}");
                     return;
