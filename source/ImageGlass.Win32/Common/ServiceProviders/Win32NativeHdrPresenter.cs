@@ -56,6 +56,12 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             || value.Equals("false", StringComparison.OrdinalIgnoreCase)
             || value.Equals("off", StringComparison.OrdinalIgnoreCase));
 
+    private static readonly bool NativeHdrForced =
+        Environment.GetEnvironmentVariable("IMAGEGLASS_NATIVE_HDR_FORCE") is { } force
+        && (force.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || force.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || force.Equals("on", StringComparison.OrdinalIgnoreCase));
+
     private static readonly D3DFeatureLevel[] FeatureLevels =
     [
         D3DFeatureLevel.Level_11_1,
@@ -124,7 +130,7 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         IsInitialized = _parentHwnd != IntPtr.Zero;
 
         PhotoTrace.Mark("native-hdr:init", null,
-            $"disabled={NativeHdrDisabled}, hwnd=0x{_parentHwnd:X}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}");
+            $"disabled={NativeHdrDisabled}, forced={NativeHdrForced}, hwnd=0x{_parentHwnd:X}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}");
     }
 
 
@@ -147,14 +153,14 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     {
         return !NativeHdrDisabled
             && IsInitialized
-            && _displayHdrEnabled
+            && (_displayHdrEnabled || NativeHdrForced)
             && metadata.HdrTransferFn == HdrTransferFunction.ScRgb;
     }
 
 
     private string DescribeEligibility(PhotoMetadata metadata)
     {
-        return $"disabled={NativeHdrDisabled}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}, "
+        return $"disabled={NativeHdrDisabled}, forced={NativeHdrForced}, initialized={IsInitialized}, displayHdr={_displayHdrEnabled}, "
             + $"transfer={metadata.HdrTransferFn}, isHdr={metadata.IsHdr}, canPresent={CanPresent(metadata)}";
     }
 
