@@ -77,6 +77,14 @@ public static class Core
 
 
     /// <summary>
+    /// Provides an optional platform-native HDR presentation path. Windows uses this to bypass
+    /// Avalonia's SDR swapchain for eligible HDR rasters while retaining the normal viewer as
+    /// an immediate fallback.
+    /// </summary>
+    public static INativeHdrPresenter? NativeHdrPresenter { get; set; } = null;
+
+
+    /// <summary>
     /// Provides a singleton instance to retrieve photo preview & thumbnail.
     /// </summary>
     public static IPhotoPreviewProvider PreviewProvider { get; set; } = null!;
@@ -324,6 +332,9 @@ public static class Core
         Core.Photos.Dispose();
         Core.ColorProfileProvider?.Dispose();
         Core.ColorProfileProvider = null;
+
+        Core.NativeHdrPresenter?.Dispose();
+        Core.NativeHdrPresenter = null;
 
         Core.FileSearchProvider?.Dispose();
         Core.FileSearchProvider = null!;
