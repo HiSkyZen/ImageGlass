@@ -20,8 +20,11 @@ using SharpGen.Runtime;
 using SkiaSharp;
 using System;
 using System.Drawing;
+using System.Globalization;
+using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Xml.Linq;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -100,6 +103,10 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
     private ID2D1Bitmap1? _targetBitmap;
     private ID2D1Bitmap1? _sourceBitmap;
     private ID3D11Texture2D? _sourceTexture;
+    private ID2D1Bitmap1? _leftNavIconBitmap;
+    private ID2D1Bitmap1? _rightNavIconBitmap;
+    private string _leftNavIconPath = string.Empty;
+    private string _rightNavIconPath = string.Empty;
 
     private SKImage? _sourceIdentity;
     private int _pixelWidth;
@@ -300,6 +307,12 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _sourceBitmap = null;
         _sourceTexture?.Dispose();
         _sourceTexture = null;
+        _leftNavIconBitmap?.Dispose();
+        _leftNavIconBitmap = null;
+        _rightNavIconBitmap?.Dispose();
+        _rightNavIconBitmap = null;
+        _leftNavIconPath = string.Empty;
+        _rightNavIconPath = string.Empty;
         _sourceIdentity = null;
         _hasLastSourceRect = false;
         _hasLastDestinationRect = false;
@@ -620,6 +633,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             navOverlay.LeftProgress,
             navOverlay.LeftPressed,
             isLeft: true,
+            navOverlay.LeftIconPath,
+            ref _leftNavIconPath,
+            ref _leftNavIconBitmap,
             renderScaling);
 
         DrawNavigationButton(
@@ -628,6 +644,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             navOverlay.RightProgress,
             navOverlay.RightPressed,
             isLeft: false,
+            navOverlay.RightIconPath,
+            ref _rightNavIconPath,
+            ref _rightNavIconBitmap,
             renderScaling);
     }
 
@@ -638,6 +657,9 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         double progress,
         bool isPressed,
         bool isLeft,
+        string iconPath,
+        ref string cachedIconPath,
+        ref ID2D1Bitmap1? cachedIconBitmap,
         double renderScaling)
     {
         if (_d2dContext is null || progress <= 0) return;
@@ -682,14 +704,39 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             accentStrokeBrush,
             (float)((isPressed ? 1.5 : 1.0) * renderScaling));
 
-        // Kobe's ViewPreviousImage/ViewNextImage SVGs are compact arrows with a horizontal
-        // stem, rendered at 50% of the button size. Mirror that geometry natively.
         var iconW = w * 0.5;
         var iconH = h * 0.5;
         var iconX = x + (w - iconW) / 2.0;
         var iconY = y + (h - iconH) / 2.0;
-        var cy2 = iconY + iconH / 2.0;
 
+        var themedIcon = GetOrCreateNavIconBitmap(
+            iconPath,
+            ref cachedIconPath,
+            ref cachedIconBitmap);
+
+        if (themedIcon is not null)
+        {
+            ((ID2D1RenderTarget)_d2dContext).DrawBitmap(
+                themedIcon,
+                new Vortice.Mathematics.Rect(
+                    (float)iconX,
+                    (float)iconY,
+                    (float)iconW,
+                    (float)iconH),
+                (float)opacity,
+                D2DBitmapInterpolationMode.Linear,
+                new Vortice.Mathematics.Rect(
+                    0,
+                    0,
+                    themedIcon.PixelSize.Width,
+                    themedIcon.PixelSize.Height));
+            return;
+        }
+
+        // Fallback for a theme icon that cannot be represented by the lightweight SVG path
+        // rasterizer below. The built-in Kobe arrow geometry remains available rather than
+        // dropping navigation feedback entirely.
+        var cy2 = iconY + iconH / 2.0;
         var tipX = isLeft
             ? iconX + iconW * 0.05
             : iconX + iconW * 0.95;
@@ -709,6 +756,201 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _d2dContext.DrawLine(top, tip, iconBrush, iconStroke);
         _d2dContext.DrawLine(tip, bottom, iconBrush, iconStroke);
         _d2dContext.DrawLine(tip, stemEnd, iconBrush, iconStroke);
+    }
+
+
+    private ID2D1Bitmap1? GetOrCreateNavIconBitmap(
+        string iconPath,
+        ref string cachedPath,
+        ref ID2D1Bitmap1? cachedBitmap)
+    {
+        if (_d2dContext is null) return null;
+
+        if (string.Equals(cachedPath, iconPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return cachedBitmap;
+        }
+
+        cachedBitmap?.Dispose();
+        cachedBitmap = null;
+        cachedPath = iconPath ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(iconPath) || !File.Exists(iconPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var raster = RasterizeSvgPaths(iconPath, 128);
+            if (raster is null) return null;
+
+            using var pixmap = raster.PeekPixels();
+            if (pixmap is null) return null;
+
+            var properties = new BitmapProperties1(
+                new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied),
+                96.0f,
+                96.0f,
+                BitmapOptions.None);
+
+            cachedBitmap = _d2dContext.CreateBitmap(
+                new SizeI(raster.Width, raster.Height),
+                pixmap.GetPixels(),
+                checked((uint)pixmap.RowBytes),
+                properties);
+
+            return cachedBitmap;
+        }
+        catch (Exception ex)
+        {
+            PhotoTrace.Mark("native-hdr:nav-icon-fallback", null,
+                $"{Path.GetFileName(iconPath)}: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+
+    private static SKImage? RasterizeSvgPaths(string path, int rasterSize)
+    {
+        var doc = XDocument.Load(path, LoadOptions.None);
+        var root = doc.Root;
+        if (root is null) return null;
+
+        var viewBox = ParseSvgViewBox(root);
+        if (viewBox.Width <= 0 || viewBox.Height <= 0) return null;
+
+        var info = new SKImageInfo(
+            rasterSize,
+            rasterSize,
+            SKColorType.Bgra8888,
+            SKAlphaType.Premul,
+            SKColorSpace.CreateSrgb());
+
+        using var surface = SKSurface.Create(info);
+        if (surface is null) return null;
+
+        var canvas = surface.Canvas;
+        canvas.Clear(SKColors.Transparent);
+
+        var scale = Math.Min(
+            rasterSize / viewBox.Width,
+            rasterSize / viewBox.Height);
+        var offsetX = (rasterSize - viewBox.Width * scale) / 2.0f;
+        var offsetY = (rasterSize - viewBox.Height * scale) / 2.0f;
+
+        canvas.Translate(offsetX, offsetY);
+        canvas.Scale(scale, scale);
+        canvas.Translate(-viewBox.Left, -viewBox.Top);
+
+        var rootFill = root.Attribute("fill")?.Value;
+        var rendered = false;
+
+        foreach (var element in root.Descendants().Where(e => e.Name.LocalName == "path"))
+        {
+            var data = element.Attribute("d")?.Value;
+            if (string.IsNullOrWhiteSpace(data)) continue;
+
+            using var svgPath = SKPath.ParseSvgPathData(data);
+            if (svgPath is null) continue;
+
+            if (string.Equals(
+                element.Attribute("fill-rule")?.Value,
+                "evenodd",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                svgPath.FillType = SKPathFillType.EvenOdd;
+            }
+
+            var fill = element.Attribute("fill")?.Value ?? rootFill ?? "#000000";
+            var stroke = element.Attribute("stroke")?.Value;
+            var opacity = ParseSvgFloat(element.Attribute("opacity")?.Value, 1.0f);
+
+            if (!string.Equals(fill, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                using var paint = new SKPaint
+                {
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Fill,
+                    Color = ParseSvgColor(fill).WithAlpha(
+                        (byte)Math.Clamp((int)Math.Round(255 * opacity), 0, 255)),
+                };
+                canvas.DrawPath(svgPath, paint);
+                rendered = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(stroke)
+                && !string.Equals(stroke, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                var strokeWidth = ParseSvgFloat(element.Attribute("stroke-width")?.Value, 1.0f);
+                using var paint = new SKPaint
+                {
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = strokeWidth,
+                    Color = ParseSvgColor(stroke).WithAlpha(
+                        (byte)Math.Clamp((int)Math.Round(255 * opacity), 0, 255)),
+                };
+                canvas.DrawPath(svgPath, paint);
+                rendered = true;
+            }
+        }
+
+        return rendered ? surface.Snapshot() : null;
+    }
+
+
+    private static SKRect ParseSvgViewBox(XElement root)
+    {
+        var viewBoxText = root.Attribute("viewBox")?.Value;
+        if (!string.IsNullOrWhiteSpace(viewBoxText))
+        {
+            var parts = viewBoxText
+                .Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 4
+                && float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+                && float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y)
+                && float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var w)
+                && float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var h))
+            {
+                return SKRect.Create(x, y, w, h);
+            }
+        }
+
+        var width = ParseSvgFloat(root.Attribute("width")?.Value, 20.0f);
+        var height = ParseSvgFloat(root.Attribute("height")?.Value, 20.0f);
+        return SKRect.Create(0, 0, width, height);
+    }
+
+
+    private static float ParseSvgFloat(string? text, float fallback)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return fallback;
+
+        var numeric = new string(text
+            .TakeWhile(ch => char.IsDigit(ch) || ch is '.' or '-' or '+' or 'e' or 'E')
+            .ToArray());
+
+        return float.TryParse(
+            numeric,
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out var value)
+            ? value
+            : fallback;
+    }
+
+
+    private static SKColor ParseSvgColor(string text)
+    {
+        try
+        {
+            return SKColor.Parse(text);
+        }
+        catch
+        {
+            return SKColors.White;
+        }
     }
 
 
