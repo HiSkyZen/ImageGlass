@@ -27,7 +27,7 @@ using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 using D2D = Vortice.Direct2D1.D2D1;
-using D2DInterpolationMode = Vortice.Direct2D1.InterpolationMode;
+using D2DBitmapInterpolationMode = Vortice.Direct2D1.BitmapInterpolationMode;
 using D2DAlphaMode = Vortice.DCommon.AlphaMode;
 using D2DPixelFormat = Vortice.DCommon.PixelFormat;
 using D3DFeatureLevel = Vortice.Direct3D.FeatureLevel;
@@ -552,20 +552,41 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
             (float)sourceRect.Width,
             (float)sourceRect.Height);
 
+        PhotoTrace.Mark("native-hdr:draw-begin", null,
+            $"target={width}x{height}, src={src}, dest={dest}");
+
         _d2dContext.BeginDraw();
         _d2dContext.Transform = Matrix3x2.Identity;
         _d2dContext.Clear(new Color4(0, 0, 0, 1));
-        _d2dContext.DrawBitmap(
+
+        // Use the ID2D1RenderTarget bitmap path rather than ID2D1DeviceContext's perspective
+        // overload. We only need axis-aligned crop + scale here; the older linear path is simpler
+        // and avoids driver/API validation around the optional 4x4 perspective transform.
+        ((ID2D1RenderTarget)_d2dContext).DrawBitmap(
             _sourceBitmap,
-            dest,
+            new Vortice.Mathematics.Rect(
+                (int)dest.Left,
+                (int)dest.Top,
+                (int)dest.Right,
+                (int)dest.Bottom),
             1.0f,
-            D2DInterpolationMode.HighQualityCubic,
-            src,
-            Matrix4x4.Identity);
-        _d2dContext.EndDraw().CheckError();
+            D2DBitmapInterpolationMode.Linear,
+            new Vortice.Mathematics.Rect(
+                (int)src.Left,
+                (int)src.Top,
+                (int)src.Right,
+                (int)src.Bottom));
+
+        PhotoTrace.Mark("native-hdr:draw-issued", null, "DrawBitmap queued");
+
+        var endDraw = _d2dContext.EndDraw();
+        PhotoTrace.Mark("native-hdr:draw-end", null, $"result={endDraw}");
+        endDraw.CheckError();
 
         // DWM performs composition; Present(0) avoids blocking the Avalonia UI thread on v-sync.
-        _swapChain.Present(0, PresentFlags.None).CheckError();
+        var present = _swapChain.Present(0, PresentFlags.None);
+        PhotoTrace.Mark("native-hdr:present", null, $"result={present}");
+        present.CheckError();
     }
 
 
