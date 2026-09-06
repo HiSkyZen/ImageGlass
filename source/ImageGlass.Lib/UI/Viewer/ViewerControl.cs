@@ -1021,7 +1021,12 @@ public partial class ViewerControl : PhControl
                     // The native Windows HDR presenter needs the pre-tone-map scRGB frame.
                     // Keep the existing SDR color-managed frame too: it remains visible underneath
                     // the native child HWND and is the immediate fallback if DXGI presentation fails.
-                    var retainForNativeHdr = Core.NativeHdrPresenter?.CanPresent(e.Photo.Metadata) == true;
+                    // Retain eligible scRGB source data whenever a platform native presenter
+                    // exists, even if its window/display initialization has not completed yet.
+                    // This avoids a first-load race and lets a later Windows HDR toggle activate
+                    // native presentation without decoding the file again.
+                    var retainForNativeHdr = Core.NativeHdrPresenter is not null
+                        && e.Photo.Metadata.HdrTransferFn == HdrTransferFunction.ScRgb;
 
                     // apply color space off the UI thread; the pin keeps the frame alive if the
                     // user navigates away mid-pass
