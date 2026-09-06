@@ -1112,6 +1112,15 @@ public partial class ViewerControl : PhControl
                         // double-dispose when HDR tone mapping is disabled and both fields point
                         // at the same pass-through SKImage.
                         SKImageRef.Set(ref _imgHdrSource, hdrRawToRetain, _imgSource);
+
+                        if (e.Photo.Metadata.HdrTransferFn == HdrTransferFunction.ScRgb)
+                        {
+                            var raw = _imgHdrSource?.Image;
+                            PhotoTrace.Mark("native-hdr:raw-retained", e.Photo.FilePath,
+                                raw is null
+                                    ? "none"
+                                    : $"{raw.Width}x{raw.Height}/{raw.ColorType}, sameAsDisplay={ReferenceEquals(raw, _imgSource?.Image)}");
+                        }
                     }
 
 
