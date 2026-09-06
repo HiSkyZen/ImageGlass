@@ -48,6 +48,12 @@ namespace ImageGlass.Win32.Common.ServiceProviders;
 /// </remarks>
 public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPresenter
 {
+    private static readonly bool NativeHdrDisabled =
+        Environment.GetEnvironmentVariable("IMAGEGLASS_NATIVE_HDR") is { } value
+        && (value.Equals("0", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("false", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("off", StringComparison.OrdinalIgnoreCase));
+
     private static readonly D3DFeatureLevel[] FeatureLevels =
     [
         D3DFeatureLevel.Level_11_1,
@@ -125,7 +131,8 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
 
     public bool CanPresent(PhotoMetadata metadata)
     {
-        return IsInitialized
+        return !NativeHdrDisabled
+            && IsInitialized
             && _displayHdrEnabled
             && metadata.HdrTransferFn == HdrTransferFunction.ScRgb;
     }
