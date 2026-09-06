@@ -86,4 +86,24 @@
   <ItemGroup>
     <ProjectReference Include="..\ImageGlass.Lib\ImageGlass.Lib.csproj" />
   </ItemGroup>
+
+
+  <!--
+    ImageGlass runtime assets (_themes, _lang, _credits, _ext_icons, default.webp) live outside
+    the project under source/__assets/__app. The release packers used to copy them only after
+    dotnet publish, which made a direct publish output compile successfully but crash at startup
+    when the default Kobe theme could not be found.
+
+    Make every Win32 publish self-runnable, including custom -o outputs used for native HDR tests.
+  -->
+  <Target Name="CopyImageGlassRuntimeAssets" AfterTargets="Publish">
+    <ItemGroup>
+      <_ImageGlassRuntimeAsset Include="$(MSBuildThisFileDirectory)..\__assets\__app\**\*" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(_ImageGlassRuntimeAsset)"
+      DestinationFiles="@(_ImageGlassRuntimeAsset->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
 </Project>
