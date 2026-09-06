@@ -224,6 +224,11 @@ public partial class ViewerControl
     {
         _liveHdrToneMapping.SetTrue();
 
+        // The HDR tool edits ImageGlass' SDR tone-mapped preview. Hide the native passthrough
+        // surface while the tool is active so its live adjustments remain visible.
+        Core.NativeHdrPresenter?.Hide();
+        InvalidateVisual();
+
         // capture the raw frame in the background WITHOUT touching the display, so opening the tool
         // never disturbs the current image (no reload -> no blank) and slider changes are instant
         _ = EnsureHdrSourceCapturedAsync();
@@ -250,6 +255,9 @@ public partial class ViewerControl
                 SKImageRef.Set(ref _imgHdrSource, null);
             }
         }
+
+        // Re-evaluate native HDR now that the editing preview no longer owns presentation.
+        InvalidateVisual();
     }
 
 
