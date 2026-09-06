@@ -373,7 +373,7 @@ public sealed partial class Win32NativeHdrPresenter : PhDisposable, INativeHdrPr
         _d2dContext.UnitMode = UnitMode.Pixels;
 
         PhotoTrace.Mark("native-hdr:d2d-format", null,
-            $"format={Format.R16G16B16A16_Float}, supported={_d2dContext.IsDxgiFormatSupported(Format.R16G16B16A16_Float)}, maxBitmap={_d2dContext.MaximumBitmapSize}");
+            $"format={Format.R16G16B16A16_Float}, supported={_d2dContext.IsDxgiFormatSupported(Format.R16G16B16A16_Float)}");
     }
 
 
