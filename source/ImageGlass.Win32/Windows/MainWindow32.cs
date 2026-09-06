@@ -94,7 +94,7 @@ public partial class MainWindow32 : MainWindow
         // A native HDR swapchain is output-dependent. Hide/recreate it on every monitor or
         // Advanced Color transition; the SDR Avalonia image underneath remains visible.
         Core.NativeHdrPresenter?.OnDisplayChanged(e.IsHdr);
-        PART_MainView.PART_Viewer.RefreshNativeHdrPresentation();
+        InvalidateVisual();
 
         // Update the profile for later loads only. Re-decoding the on-screen photo here would
         // flash the viewer every time the window is dragged to another monitor.
